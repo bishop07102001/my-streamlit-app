@@ -19,12 +19,12 @@ from dotenv import load_dotenv
 load_dotenv()
 warnings.filterwarnings('ignore')
 
-# ============================================================
+
 # CONFIG
-# ============================================================
+
 OPENAI_API_KEY      = os.getenv("OPENAI_API_KEY")
 LLAMAINDEX_API_KEY  = os.getenv("LLAMAINDEX_API_KEY")
-LLAMACLOUD_PIPELINE = os.getenv("LLAMACLOUD_PIPELINE_ID", "")
+LLAMACLOUD_PIPELINE_ID = os.getenv("LLAMACLOUD_PIPELINE_ID", "")
 MODEL_FLAGSHIP      = "gpt-5.4"
 MODEL_MINI          = "gpt-5.4-mini"
 
@@ -33,9 +33,8 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 # Global summary cache that function_tools read from at runtime
 _summary_cache: dict = {}
 
-# ============================================================
 # DATA LOADING
-# ============================================================
+
 
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
@@ -82,9 +81,7 @@ def build_summary_cache(df: pd.DataFrame):
         "shootings": int(df["SHOOTING"].notna().sum()),
     }
 
-# ============================================================
 # CHART GENERATION
-# ============================================================
 
 def fig_to_base64(fig) -> str:
     buf = io.BytesIO()
@@ -180,9 +177,7 @@ def generate_charts(df_hash, _df) -> dict:
 
     return charts
 
-# ============================================================
 # LLAMACLOUD RETRIEVAL TOOL
-# ============================================================
 
 @function_tool
 def retrieve_crime_analysis_context(query: str) -> str:
@@ -193,7 +188,7 @@ def retrieve_crime_analysis_context(query: str) -> str:
     try:
         llama_client = LlamaCloud(api_key=LLAMAINDEX_API_KEY)
         results = llama_client.pipelines.retrieve(
-            pipeline_id=LLAMACLOUD_PIPELINE,
+            pipeline_id=LLAMACLOUD_PIPELINE_ID,
             query=query,
             dense_similarity_top_k=3,
         )
@@ -201,9 +196,7 @@ def retrieve_crime_analysis_context(query: str) -> str:
     except Exception as e:
         return f"LlamaCloud retrieval unavailable: {str(e)}. Falling back to cached stats."
 
-# ============================================================
 # CRIME STATS TOOL (reads from global cache)
-# ============================================================
 
 @function_tool
 def get_crime_dataset_stats(metric: str) -> str:
@@ -219,9 +212,7 @@ def get_crime_dataset_stats(metric: str) -> str:
         return f"Unknown metric '{metric}'. Available: {keys}"
     return str(val)
 
-# ============================================================
 # AGENT DEFINITIONS
-# ============================================================
 
 data_retrieval_agent = Agent(
     name="Crime Data Retrieval Agent",
@@ -266,9 +257,7 @@ supervisor_agent = Agent(
     model=MODEL_FLAGSHIP,
 )
 
-# ============================================================
 # VISION ANALYSIS (direct OpenAI client for image inputs)
-# ============================================================
 
 def analyze_chart_with_vision(b64_image: str, chart_title: str, model: str) -> str:
     """Send a chart to GPT vision and return a strategic analysis."""
@@ -300,9 +289,7 @@ def analyze_chart_with_vision(b64_image: str, chart_title: str, model: str) -> s
     )
     return response.choices[0].message.content
 
-# ============================================================
 # AGENT RUNNER (thread-safe for Streamlit)
-# ============================================================
 
 def run_agent_sync(message: str) -> str:
     """Run the supervisor agent in a background thread to avoid event loop conflicts."""
@@ -326,9 +313,7 @@ def run_agent_sync(message: str) -> str:
     t.join(timeout=60)
     return result_holder.get("output", "Agent timed out. Please try again.")
 
-# ============================================================
 # GRAPHVIZ AGENT NETWORK
-# ============================================================
 
 def build_agent_graph() -> graphviz.Digraph:
     dot = graphviz.Digraph(comment="Crime Analysis Agent Network")
@@ -365,9 +350,7 @@ def build_agent_graph() -> graphviz.Digraph:
 
     return dot
 
-# ============================================================
 # STREAMLIT UI
-# ============================================================
 
 def main():
     st.set_page_config(
@@ -408,12 +391,12 @@ def main():
             help="Model used for chart image analysis.",
         )
 
-        llamacloud_ok = bool(LLAMAINDEX_API_KEY and LLAMACLOUD_PIPELINE)
+        llamacloud_ok = bool(LLAMAINDEX_API_KEY and LLAMACLOUD_PIPELINE_ID)
         st.divider()
         st.markdown("**LlamaCloud Status**")
         if llamacloud_ok:
             st.success("Connected")
-            st.caption(f"Pipeline: `{LLAMACLOUD_PIPELINE[:12]}...`")
+            st.caption(f"Pipeline: `{LLAMACLOUD_PIPELINE_ID[:12]}...`")
         else:
             st.warning("Not configured - add LLAMAINDEX_API_KEY and LLAMACLOUD_PIPELINE_ID to .env")
 
@@ -444,9 +427,9 @@ def main():
     # ---- TABS ----
     tab1, tab2, tab3 = st.tabs(["📊 Crime Dashboard", "💬 AI Analyst Chat", "📋 Strategy Briefing"])
 
-    # ============================================================
+
     # TAB 1: DASHBOARD
-    # ============================================================
+
     with tab1:
         if charts is None:
             st.warning("Upload a dataset to generate charts.")
@@ -475,9 +458,9 @@ def main():
                             with st.expander(f"AI Analysis: {c['title']}", expanded=True):
                                 st.markdown(analysis)
 
-    # ============================================================
+
     # TAB 2: AI ANALYST CHAT
-    # ============================================================
+
     with tab2:
         st.subheader("Ask the Crime Analysis AI")
         st.caption(
@@ -513,9 +496,9 @@ def main():
                 st.session_state.messages = []
                 st.rerun()
 
-    # ============================================================
+
     # TAB 3: STRATEGY BRIEFING
-    # ============================================================
+
     with tab3:
         st.subheader("Generate Full Weekly Strategy Briefing")
         st.caption(
