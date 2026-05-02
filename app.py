@@ -45,7 +45,8 @@ def load_data(path: str) -> pd.DataFrame:
         "Incident Number": "INCIDENT_NUMBER",
         "From Date": "OCCURRED_ON_DATE",
         "BPD District": "DISTRICT",
-        "Crime Category": "OFFENSE_CODE_GROUP",
+        #"Crime Category": "OFFENSE_CODE_GROUP",
+        "Offense Description": "OFFENSE_CODE_GROUP",
         "Crime Part": "UCR_PART",
         "Hour of Day": "HOUR",
         "Day of Week": "DAY_OF_WEEK",
@@ -56,9 +57,11 @@ def load_data(path: str) -> pd.DataFrame:
 
     df["OCCURRED_ON_DATE"] = pd.to_datetime(df["OCCURRED_ON_DATE"], errors="coerce")
 
+    df = df[df["YEAR"].between(2020, 2026)]
+
     # SHOOTING column doesn't exist in this dataset, add a placeholder
     if "SHOOTING" not in df.columns:
-        df["SHOOTING"] = None
+        df["SHOOTING"] = 0
 
     return df
 
@@ -74,11 +77,11 @@ def build_summary_cache(df: pd.DataFrame):
         ),
         "hourly": df.groupby("HOUR")["INCIDENT_NUMBER"].count().to_dict(),
         "daily": df.groupby("DAY_OF_WEEK")["INCIDENT_NUMBER"].count().to_dict(),
-        "district": df.groupby("DISTRICT")["INCIDENT_NUMBER"].count().sort_values(ascending=False).head(6).to_dict(),
-        "offense": df.groupby("OFFENSE_CODE_GROUP")["INCIDENT_NUMBER"].count().sort_values(ascending=False).head(8).to_dict(),
+        "district": df.groupby("DISTRICT")["INCIDENT_NUMBER"].count().sort_values(ascending=False).head(10).to_dict(),
+        "offense": df.groupby("OFFENSE_CODE_GROUP")["INCIDENT_NUMBER"].count().sort_values(ascending=False).head(10).to_dict(),
         "ucr": df["UCR_PART"].value_counts().to_dict(),
-        "streets": df.groupby("STREET")["INCIDENT_NUMBER"].count().sort_values(ascending=False).head(5).to_dict(),
-        "shootings": int(df["SHOOTING"].notna().sum()),
+        "streets": df.groupby("STREET")["INCIDENT_NUMBER"].count().sort_values(ascending=False).head(10).to_dict(),
+        "shootings": int(df["SHOOTING"].sum()),
     }
 
 # CHART GENERATION
@@ -134,26 +137,66 @@ def generate_charts(df_hash, _df) -> dict:
     ax.set_ylabel("Incident Count")
     charts["district"] = {"b64": fig_to_base64(fig), "title": "Top Districts by Incident Volume"}
 
-    # 4: Top offense types
-    fig, ax = plt.subplots(figsize=(10, 4.5))
+    # 4: Top offense descriptions
+    fig, ax = plt.subplots(figsize=(11, 5))
     offenses = _df.groupby("OFFENSE_CODE_GROUP")["INCIDENT_NUMBER"].count().sort_values(ascending=False).head(10)
     offenses.sort_values().plot(kind="barh", ax=ax, color="mediumseagreen", alpha=0.85)
-    ax.set_title("Top 10 Offense Types", fontweight="bold", fontsize=13)
+    ax.set_title("Top 10 Offense Descriptions", fontweight="bold", fontsize=13)
     ax.set_xlabel("Incident Count")
-    charts["offense"] = {"b64": fig_to_base64(fig), "title": "Top 10 Offense Types"}
+    ax.set_ylabel("Offense Type")
+    plt.tight_layout()
+    charts["offense"] = {"b64": fig_to_base64(fig), "title": "Top 10 Offense Descriptions"}
 
-    # 5: UCR part distribution
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ucr = _df["UCR_PART"].value_counts()
-    ax.pie(
-        ucr.values,
-        labels=ucr.index,
+    # 5: Crime Part distribution (Boston PD classification, extends standard UCR)
+    fig, ax = plt.subplots(figsize=(5, 4.2))
+    ucr_counts = _df["UCR_PART"].value_counts()
+
+    # Canonical order rather than frequency order
+    part_order = ["Part One", "Part Two", "Part Three", "Other"]
+
+    part_descriptions = {
+        "Part One": "Part One: Major index crimes",
+        "Part Two": "Part Two: Less serious offenses",
+        "Part Three": "Part Three: Calls for service and non-criminal incidents",
+        "Other": "Other: Miscellaneous",
+    }
+
+    colors_map = {
+        "Part One": "#e74c3c",
+        "Part Two": "#f39c12",
+        "Part Three": "#3498db",
+        "Other": "#95a5a6",
+    }
+
+    labels = [p for p in part_order if p in ucr_counts.index]
+    values = [ucr_counts[p] for p in labels]
+    colors = [colors_map[p] for p in labels]
+    legend_labels = [part_descriptions[p] for p in labels]
+
+    wedges, texts, autotexts = ax.pie(
+        values,
+        labels=labels,
         autopct="%1.1f%%",
-        colors=["#e74c3c", "#f39c12", "#3498db", "#95a5a6"],
+        colors=colors,
         startangle=90,
+        pctdistance=0.78,
+        textprops={'fontsize': 9},
     )
-    ax.set_title("UCR Classification Distribution", fontweight="bold", fontsize=13)
-    charts["ucr"] = {"b64": fig_to_base64(fig), "title": "UCR Classification Distribution"}
+
+    ax.set_title("Crime Part Distribution", fontweight="bold", fontsize=12, pad=10)
+
+    ax.legend(
+        wedges,
+        legend_labels,
+        loc="upper center",
+        bbox_to_anchor=(1, -0.02),
+        fontsize=5,
+        frameon=False,
+        handlelength=1.2,
+    )
+
+    plt.tight_layout()
+    charts["ucr"] = {"b64": fig_to_base64(fig), "title": "Crime Part Distribution"}
 
     # 6: Month x Hour heatmap
     fig, ax = plt.subplots(figsize=(12, 4.5))
@@ -174,6 +217,80 @@ def generate_charts(df_hash, _df) -> dict:
     ax.set_title("Top 10 Streets by Incident Count", fontweight="bold", fontsize=13)
     ax.set_xlabel("Incident Count")
     charts["streets"] = {"b64": fig_to_base64(fig), "title": "Top 10 Streets by Incident Count"}
+
+    # 8: Shootings by District (2024 vs 2025 comparison)
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+
+    # Filter to shootings only, and only 2024-2025
+    shootings_df = _df[(_df["SHOOTING"] == 1) & (_df["YEAR"].isin([2024, 2025]))]
+
+    if len(shootings_df) == 0:
+        # Graceful fallback if no shooting data is available
+        ax.text(0.5, 0.5,
+                "Shooting data not available in this dataset.\n"
+                "Upload the preprocessed CSV with the SHOOTING column to enable this chart.",
+                ha="center", va="center", fontsize=11, color="gray",
+                transform=ax.transAxes)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        # Top 10 districts by total shooting volume across 2024-2025
+        top_districts = (
+            shootings_df.groupby("DISTRICT")["INCIDENT_NUMBER"]
+            .count()
+            .sort_values(ascending=False)
+            .head(10)
+            .index.tolist()
+        )
+
+        # Counts per district for each year
+        counts_2024 = (
+            shootings_df[shootings_df["YEAR"] == 2024]
+            .groupby("DISTRICT")["INCIDENT_NUMBER"]
+            .count()
+            .reindex(top_districts, fill_value=0)
+        )
+        counts_2025 = (
+            shootings_df[shootings_df["YEAR"] == 2025]
+            .groupby("DISTRICT")["INCIDENT_NUMBER"]
+            .count()
+            .reindex(top_districts, fill_value=0)
+        )
+
+        # Side-by-side bars
+        import numpy as np
+        x = np.arange(len(top_districts))
+        width = 0.4
+
+        ax.bar(x - width / 2, counts_2024.values, width,
+               color="#95a5a6", alpha=0.85, label="2024")
+        ax.bar(x + width / 2, counts_2025.values, width,
+               color="#c0392b", alpha=0.9, label="2025")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(top_districts)
+        ax.set_title("Shootings by District (2024 vs 2025)", fontweight="bold", fontsize=13)
+        ax.set_xlabel("District")
+        ax.set_ylabel("Shooting Incidents")
+        ax.legend(fontsize=10)
+
+        # Citywide totals annotation
+        total_2024 = int(counts_2024.sum())
+        total_2025 = int(counts_2025.sum())
+        change = total_2025 - total_2024
+        pct = (change / total_2024 * 100) if total_2024 > 0 else 0
+        arrow = "▲" if change > 0 else ("▼" if change < 0 else "→")
+        ax.text(0.99, 0.97,
+                f"2024: {total_2024:,} shootings\n"
+                f"2025: {total_2025:,} shootings\n"
+                f"{arrow} {abs(change):,} ({pct:+.1f}%)",
+                transform=ax.transAxes, ha="right", va="top",
+                fontsize=9, family="monospace",
+                bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                          edgecolor="#888", alpha=0.9))
+
+    plt.tight_layout()
+    charts["shootings"] = {"b64": fig_to_base64(fig), "title": "Shootings by District (2024 vs 2025)"}
 
     return charts
 
@@ -386,7 +503,7 @@ def main():
         st.divider()
         selected_model = st.selectbox(
             "Vision Model",
-            options=[MODEL_FLAGSHIP, MODEL_MINI, "gpt-5.4-nano"],
+            options=[MODEL_FLAGSHIP, MODEL_MINI],
             index=0,
             help="Model used for chart image analysis.",
         )
